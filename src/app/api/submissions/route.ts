@@ -98,9 +98,14 @@ export async function POST(request: Request) {
         const drawingsDir = getDrawingsDirectory();
         const filePath = path.join(drawingsDir, `${submissionId}.png`);
         
+        console.log(`[Submissions API] Writing drawing to path: ${filePath}`);
         fs.writeFileSync(filePath, base64Data, "base64");
+        console.log(`[Submissions API] Successfully wrote drawing file. Size: ${fs.statSync(filePath).size} bytes`);
+        
         finalImageUrl = `/api/drawings/${submissionId}`;
       }
+    } else {
+      console.log("[Submissions API] No valid base64 image provided in request.");
     }
 
     // 3. Update database record with served URL to the PNG drawing

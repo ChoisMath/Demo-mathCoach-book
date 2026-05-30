@@ -12,8 +12,10 @@ export async function GET(
     const { id } = await params;
     const volumePath = process.env.VOLUME_PATH || path.join(process.cwd(), "public");
     const filePath = path.join(volumePath, "drawings", `${id}.png`);
+    console.log(`[Drawings API] Serving drawing ID: ${id} from path: ${filePath}`);
 
     if (!fs.existsSync(filePath)) {
+      console.error(`[Drawings API] File not found at: ${filePath}`);
       return new NextResponse("그림 파일을 찾을 수 없습니다.", { status: 404 });
     }
 
