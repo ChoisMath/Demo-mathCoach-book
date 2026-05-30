@@ -113,15 +113,37 @@ ${studentExplanation || "(아직 입력하지 않음)"}
       }
     ];
 
-    // Call the model
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: contents,
-      config: {
-        systemInstruction: activeSystemPrompt,
-        temperature: 0.3,
+    // Call the model with retries for transient 429 Rate Limits
+    let response;
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (attempts < maxAttempts) {
+      try {
+        attempts++;
+        response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: contents,
+          config: {
+            systemInstruction: activeSystemPrompt,
+            temperature: 0.3,
+          }
+        });
+        break; // Success, exit retry loop
+      } catch (err: any) {
+        const isRateLimit = err.status === 429 || (err.message && err.message.includes("429"));
+        if (isRateLimit && attempts < maxAttempts) {
+          console.warn(`[Gemini API] Rate limited (429). Retrying attempt ${attempts + 1}/${maxAttempts} in 2 seconds...`);
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        } else {
+          throw err; // Re-throw error if it's not a rate limit or we ran out of retry attempts
+        }
       }
-    });
+    }
+
+    if (!response) {
+      throw new Error("Gemini API 응답을 받지 못했습니다.");
+    }
 
     const responseText = response.text || "";
 
