@@ -139,8 +139,18 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (!canvas) return;
 
     const rect = canvas.parentElement?.getBoundingClientRect();
-    const w = rect?.width || 600;
+    const w = rect?.width || 0;
     const h = isFullscreen ? (window.innerHeight - 150) : 400; // fit window on fullscreen
+
+    // Prevent wiping the canvas if the container is temporarily hidden, collapsed, or layout-throttled (e.g. keyboard popup)
+    if (w === 0 || h === 0) return;
+
+    // Prevent redundant canvas clears and resizes if the actual dimensions have not changed
+    const currentW = canvas.width / 2;
+    const currentH = canvas.height / 2;
+    if (Math.abs(currentW - w) < 1 && Math.abs(currentH - h) < 1) {
+      return;
+    }
 
     canvas.width = w * 2;
     canvas.height = h * 2;
