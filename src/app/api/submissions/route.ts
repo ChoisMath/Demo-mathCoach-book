@@ -20,7 +20,26 @@ export async function GET() {
     const submissions = await prisma.submission.findMany({
       orderBy: { createdAt: "desc" }
     });
-    return NextResponse.json(submissions);
+
+    // Map database flat schema back to the nested studentInfo structure expected by the frontend
+    const mapped = submissions.map((sub) => ({
+      id: sub.id,
+      timestamp: sub.timestamp,
+      studentInfo: {
+        className: sub.className,
+        number: sub.number,
+        name: sub.name
+      },
+      problem: sub.problem,
+      studentExplanation: sub.studentExplanation,
+      studentSolutionImage: sub.studentSolutionImage,
+      isSolved: sub.isSolved,
+      coachResponses: sub.coachResponses,
+      comparisonLogs: sub.comparisonLogs,
+      finalReflection: sub.finalReflection
+    }));
+
+    return NextResponse.json(mapped);
   } catch (error: any) {
     console.error("Failed to fetch submissions:", error);
     return NextResponse.json(
