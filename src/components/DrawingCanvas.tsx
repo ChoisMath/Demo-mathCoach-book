@@ -48,6 +48,12 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const turnCountRef = useRef<number>(0);
   const isScribbleRef = useRef<boolean>(false);
 
+  // Stylus, Pointer, and drawing refs for latency-free state tracking & palm rejection
+  const activePointerIdRef = useRef<number | null>(null);
+  const lastPenTimeRef = useRef<number>(0);
+  const isDrawingRef = useRef<boolean>(false);
+  const currentStrokeRef = useRef<Stroke | null>(null);
+
   // Convert raw coords to normalized 1000x800 virtual resolution coords
   const toVirtualCoords = (clientX: number, clientY: number): Point => {
     const canvas = canvasRef.current;
@@ -248,24 +254,35 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     });
   };
 
-  // Mouse & Touch coords retriever
-  const getClientCoords = (e: React.MouseEvent | React.TouchEvent) => {
-    if ("touches" in e) {
-      if (e.touches.length === 0) return null;
-      return { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
-    }
-    return { clientX: e.clientX, clientY: e.clientY };
-  };
-
-  // Start drawing handler
-  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+  // Start drawing handler using Pointer Events (provides palm rejection and hover prevention)
+  const startDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (disabled) return;
+
+    // Palm rejection: If stylus has been used recently, ignore touch inputs (likely palm resting)
+    if (e.pointerType === "touch" && Date.now() - lastPenTimeRef.current < 1500) {
+      return;
+    }
+    if (e.pointerType === "pen") {
+      lastPenTimeRef.current = Date.now();
+    }
+
+    // Only allow primary pointer contact (e.buttons === 1 checks active pressure contact)
+    if (!e.isPrimary || e.buttons !== 1) return;
+    
+    // Prevent default touch gestures (e.g. scroll or zoom while drawing)
     if (e.cancelable) e.preventDefault();
 
-    const coords = getClientCoords(e);
-    if (!coords) return;
+    // Lock to this pointer ID to ignore secondary touch coordinates
+    activePointerIdRef.current = e.pointerId;
+    
+    // Request pointer capture to track moves outside the canvas safely
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (err) {
+      // safe fallback if browser does not support pointer capture on element
+    }
 
-    const vPoint = toVirtualCoords(coords.clientX, coords.clientY);
+    const vPoint = toVirtualCoords(e.clientX, e.clientY);
     const canvas = canvasRef.current;
     const context = contextRef.current;
     
@@ -276,6 +293,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       context.strokeStyle = isEraser ? "#f1f5f9" : color;
       context.lineWidth = lineWidth;
       
+      isDrawingRef.current = true;
       setIsDrawing(true);
       
       const newStroke: Stroke = {
@@ -283,6 +301,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         color: isEraser ? "#ffffff" : color,
         lineWidth: lineWidth,
       };
+      currentStrokeRef.current = newStroke;
       setCurrentStroke(newStroke);
 
       // Reset scribble gesture states
@@ -296,17 +315,29 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     }
   };
 
-  // Drawing in progress handler
-  const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || disabled) return;
+  // Drawing in progress handler using Pointer Events
+  const draw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (disabled) return;
+
+    if (e.pointerType === "pen") {
+      lastPenTimeRef.current = Date.now();
+    }
+
+    // Verify pointer matches the one that started drawing (palm rejection)
+    if (!isDrawingRef.current || e.pointerId !== activePointerIdRef.current) return;
+
+    // Hover drawing prevention: if button is released (e.buttons !== 1), stop drawing immediately
+    if (e.buttons !== 1) {
+      stopDrawing(e);
+      return;
+    }
+
     if (e.cancelable) e.preventDefault();
 
-    const coords = getClientCoords(e);
-    if (!coords) return;
-
-    const vPoint = toVirtualCoords(coords.clientX, coords.clientY);
+    const vPoint = toVirtualCoords(e.clientX, e.clientY);
     const canvas = canvasRef.current;
     const context = contextRef.current;
+    const currentStroke = currentStrokeRef.current;
 
     if (canvas && context && currentStroke) {
       // Draw locally in real-time
@@ -316,7 +347,9 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
       // Store point in current stroke
       const updatedPoints = [...currentStroke.points, vPoint];
-      setCurrentStroke({ ...currentStroke, points: updatedPoints });
+      const updatedStroke = { ...currentStroke, points: updatedPoints };
+      currentStrokeRef.current = updatedStroke;
+      setCurrentStroke(updatedStroke);
 
       // Handle eraser drag
       if (isEraser) {
@@ -365,15 +398,34 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     }
   };
 
-  // Drawing complete handler
-  const stopDrawing = () => {
-    if (!isDrawing) return;
+  // Drawing complete handler using Pointer Events
+  const stopDrawing = (e?: React.PointerEvent<HTMLCanvasElement>) => {
+    // Ignore events that do not match our drawing pointer ID
+    if (e && e.pointerId !== activePointerIdRef.current) return;
+    
+    // Release pointer capture
+    if (e) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        // safe fallback
+      }
+    }
+
+    activePointerIdRef.current = null;
+
+    if (!isDrawingRef.current) return;
+    isDrawingRef.current = false;
     setIsDrawing(false);
 
-    if (currentStroke && currentStroke.points.length > 0) {
+    const strokeToSave = currentStrokeRef.current;
+    currentStrokeRef.current = null;
+    setCurrentStroke(null);
+
+    if (strokeToSave && strokeToSave.points.length > 0) {
       if (isScribbleRef.current && !isEraser) {
         // Trigger Scribble Erasing!
-        const scribbleStroke = currentStroke;
+        const scribbleStroke = strokeToSave;
         
         // Calculate filtered strokes synchronously to immediately redraw
         const filtered = strokes.filter((stroke) => {
@@ -393,22 +445,18 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
         setStrokes(filtered);
         setHistory((h) => [...h, filtered]);
-        setCurrentStroke(null);
         redraw(filtered, null, false);
       } else if (!isEraser) {
         // Standard Stroke saving
-        const newStrokes = [...strokes, currentStroke];
+        const newStrokes = [...strokes, strokeToSave];
         setStrokes(newStrokes);
         setHistory((h) => [...h, newStrokes]);
-        setCurrentStroke(null);
         redraw(newStrokes, null, false);
       } else {
         // Eraser released
-        setCurrentStroke(null);
         redraw(strokes, null, false);
       }
     } else {
-      setCurrentStroke(null);
       redraw(strokes, null, false);
     }
   };
@@ -590,13 +638,11 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         )}
         <canvas
           ref={canvasRef}
-          onMouseDown={startDrawing}
-          onMouseMove={draw}
-          onMouseUp={stopDrawing}
-          onMouseLeave={stopDrawing}
-          onTouchStart={startDrawing}
-          onTouchMove={draw}
-          onTouchEnd={stopDrawing}
+          onPointerDown={startDrawing}
+          onPointerMove={draw}
+          onPointerUp={stopDrawing}
+          onPointerCancel={stopDrawing}
+          style={{ touchAction: "none" }}
           className={`block w-full h-full cursor-crosshair rounded-b-xl ${
             disabled ? "opacity-75 cursor-not-allowed" : ""
           }`}
