@@ -79,9 +79,12 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
     const rect = canvas.getBoundingClientRect();
     
-    // Clear canvas with white background
+    // Clear canvas with white background (reset transform to ensure physical pixel coverage, preventing residue)
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
     context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width / 2, canvas.height / 2);
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.restore();
 
     // Draw all completed strokes
     strokes.forEach((stroke) => {
@@ -340,12 +343,12 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             if (len1 > 0 && len2 > 0) {
               const cosTheta = dot / (len1 * len2);
               
-              // Angle is between 70deg and 180deg (direction reversal)
-              if (cosTheta < -0.3) {
+              // Angle is 70 degrees or more (cos(70deg) = 0.342)
+              if (cosTheta < 0.35) {
                 turnCountRef.current += 1;
                 
-                // If 5+ rapid zig-zags are drawn, it is a scribble gesture!
-                if (turnCountRef.current >= 5) {
+                // If 4+ rapid zig-zags (turns) are drawn, it is a scribble gesture!
+                if (turnCountRef.current >= 4) {
                   isScribbleRef.current = true;
                 }
               }
@@ -550,13 +553,19 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         <button
           type="button"
           onClick={() => setIsFullscreen(!isFullscreen)}
-          className="absolute top-3 right-3 z-20 p-2 bg-slate-900/80 hover:bg-slate-900 text-white rounded-lg shadow-md flex items-center justify-center transition-colors cursor-pointer"
+          className="absolute top-3 right-3 z-20 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-lg flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer font-bold border border-blue-500/20"
           title={isFullscreen ? "화면 축소" : "화면 확대"}
         >
           {isFullscreen ? (
-            <Minimize2 className="h-5 w-5" />
+            <>
+              <Minimize2 className="h-4 w-4 mr-1.5 text-white" />
+              <span className="text-[11px] font-extrabold tracking-tight">원래 크기로</span>
+            </>
           ) : (
-            <Maximize2 className="h-5 w-5" />
+            <>
+              <Maximize2 className="h-4 w-4 mr-1.5 text-white" />
+              <span className="text-[11px] font-extrabold tracking-tight">전체화면 쓰기</span>
+            </>
           )}
         </button>
 
