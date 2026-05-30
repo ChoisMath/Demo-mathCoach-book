@@ -71,14 +71,20 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     };
   };
 
-  // Redraw all strokes on the canvas
-  const redraw = () => {
+  // Redraw all strokes on the canvas (supports parameter overrides to bypass React state closure latency)
+  const redraw = (
+    overrideStrokes?: Stroke[],
+    overrideCurrentStroke?: Stroke | null,
+    overrideIsDrawing?: boolean
+  ) => {
     const canvas = canvasRef.current;
     const context = contextRef.current;
     if (!canvas || !context) return;
 
-    const rect = canvas.getBoundingClientRect();
-    
+    const activeStrokes = overrideStrokes !== undefined ? overrideStrokes : strokes;
+    const activeCurrent = overrideCurrentStroke !== undefined ? overrideCurrentStroke : currentStroke;
+    const activeIsDrawing = overrideIsDrawing !== undefined ? overrideIsDrawing : isDrawing;
+
     // Clear canvas with white background (reset transform to ensure physical pixel coverage, preventing residue)
     context.save();
     context.setTransform(1, 0, 0, 1, 0, 0);
@@ -87,7 +93,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     context.restore();
 
     // Draw all completed strokes
-    strokes.forEach((stroke) => {
+    activeStrokes.forEach((stroke) => {
       if (stroke.points.length === 0) return;
       context.beginPath();
       context.strokeStyle = stroke.color;
@@ -104,16 +110,16 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     });
 
     // Draw current active stroke if drawing
-    if (isDrawing && currentStroke && currentStroke.points.length > 0) {
+    if (activeIsDrawing && activeCurrent && activeCurrent.points.length > 0) {
       context.beginPath();
-      context.strokeStyle = isEraser ? "#f1f5f9" : currentStroke.color; // Show preview of erasing if eraser
-      context.lineWidth = currentStroke.lineWidth;
+      context.strokeStyle = isEraser ? "#f1f5f9" : activeCurrent.color; // Show preview of erasing if eraser
+      context.lineWidth = activeCurrent.lineWidth;
       
-      const start = fromVirtualCoords(currentStroke.points[0].x, currentStroke.points[0].y);
+      const start = fromVirtualCoords(activeCurrent.points[0].x, activeCurrent.points[0].y);
       context.moveTo(start.x, start.y);
 
-      for (let i = 1; i < currentStroke.points.length; i++) {
-        const pt = fromVirtualCoords(currentStroke.points[i].x, currentStroke.points[i].y);
+      for (let i = 1; i < activeCurrent.points.length; i++) {
+        const pt = fromVirtualCoords(activeCurrent.points[i].x, activeCurrent.points[i].y);
         context.lineTo(pt.x, pt.y);
       }
       context.stroke();
@@ -369,42 +375,42 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         // Trigger Scribble Erasing!
         const scribbleStroke = currentStroke;
         
-        setStrokes((prevStrokes) => {
-          const filtered = prevStrokes.filter((stroke) => {
-            // 1. Check bounding box overlap first for performance
-            const isBoxOverlap = doBoundingBoxesOverlap(scribbleStroke, stroke, 30);
-            if (!isBoxOverlap) return true;
+        // Calculate filtered strokes synchronously to immediately redraw
+        const filtered = strokes.filter((stroke) => {
+          const isBoxOverlap = doBoundingBoxesOverlap(scribbleStroke, stroke, 30);
+          if (!isBoxOverlap) return true;
 
-            // 2. Exact distance check: any point in the stroke is within 30 virtual units of any scribble segment
-            const isScribbled = stroke.points.some((p) => {
-              for (let i = 1; i < scribbleStroke.points.length; i++) {
-                const dist = getDistanceToSegment(p, scribbleStroke.points[i - 1], scribbleStroke.points[i]);
-                if (dist < 35) return true;
-              }
-              return false;
-            });
-
-            return !isScribbled; // Delete if scribbled
+          const isScribbled = stroke.points.some((p) => {
+            for (let i = 1; i < scribbleStroke.points.length; i++) {
+              const dist = getDistanceToSegment(p, scribbleStroke.points[i - 1], scribbleStroke.points[i]);
+              if (dist < 35) return true;
+            }
+            return false;
           });
 
-          // Store history
-          setHistory((h) => [...h, filtered]);
-          return filtered;
+          return !isScribbled;
         });
 
-        // Trigger visual redraw without adding the scribble stroke itself
+        setStrokes(filtered);
+        setHistory((h) => [...h, filtered]);
         setCurrentStroke(null);
-        setTimeout(() => redraw(), 10);
+        redraw(filtered, null, false);
       } else if (!isEraser) {
         // Standard Stroke saving
         const newStrokes = [...strokes, currentStroke];
         setStrokes(newStrokes);
         setHistory((h) => [...h, newStrokes]);
+        setCurrentStroke(null);
+        redraw(newStrokes, null, false);
+      } else {
+        // Eraser released
+        setCurrentStroke(null);
+        redraw(strokes, null, false);
       }
+    } else {
+      setCurrentStroke(null);
+      redraw(strokes, null, false);
     }
-
-    setCurrentStroke(null);
-    redraw();
   };
 
   // Undo drawing
