@@ -46,6 +46,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   // Scribble gesture detection temporary states
   const scribblePointsRef = useRef<Point[]>([]);
   const turnCountRef = useRef<number>(0);
+  const lastTurnSignRef = useRef<number | null>(null); // Track alternating turn signs (+1, -1) to filter out circles/loops
   const isScribbleRef = useRef<boolean>(false);
 
   // Stylus, Pointer, and drawing refs for latency-free state tracking & palm rejection
@@ -307,6 +308,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       // Reset scribble gesture states
       scribblePointsRef.current = [vPoint];
       turnCountRef.current = 0;
+      lastTurnSignRef.current = null;
       isScribbleRef.current = false;
 
       if (isEraser) {
@@ -339,17 +341,23 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const context = contextRef.current;
     const currentStroke = currentStrokeRef.current;
 
-    if (canvas && context && currentStroke) {
-      // Draw locally in real-time
+    if (canvas && context && currentStroke && currentStroke.points.length > 0) {
+      const lastPoint = currentStroke.points[currentStroke.points.length - 1];
       const actualPt = fromVirtualCoords(vPoint.x, vPoint.y);
+      const prevPt = fromVirtualCoords(lastPoint.x, lastPoint.y);
+
+      // 1. Draw segment-by-segment in real-time (O(1) rendering, extremely fast and smooth)
+      context.beginPath();
+      context.strokeStyle = isEraser ? "#f1f5f9" : color;
+      context.lineWidth = lineWidth;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.moveTo(prevPt.x, prevPt.y);
       context.lineTo(actualPt.x, actualPt.y);
       context.stroke();
 
-      // Store point in current stroke
-      const updatedPoints = [...currentStroke.points, vPoint];
-      const updatedStroke = { ...currentStroke, points: updatedPoints };
-      currentStrokeRef.current = updatedStroke;
-      setCurrentStroke(updatedStroke);
+      // 2. Store point in current stroke ref only (prevents component re-renders during active drag)
+      currentStroke.points.push(vPoint);
 
       // Handle eraser drag
       if (isEraser) {
@@ -384,11 +392,19 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
               
               // Angle is 70 degrees or more (cos(70deg) = 0.342)
               if (cosTheta < 0.35) {
-                turnCountRef.current += 1;
-                
-                // If 4+ rapid zig-zags (turns) are drawn, it is a scribble gesture!
-                if (turnCountRef.current >= 4) {
-                  isScribbleRef.current = true;
+                // Calculate cross product of v1 and v2 to determine direction of turn (Left vs Right)
+                const cross = v1.x * v2.y - v1.y * v2.x;
+                const sign = cross > 0 ? 1 : -1;
+
+                // Only count the turn if it alternates direction. Circles (ㅇ) and loops turn in the same direction, so they are ignored!
+                if (lastTurnSignRef.current === null || sign !== lastTurnSignRef.current) {
+                  turnCountRef.current += 1;
+                  lastTurnSignRef.current = sign;
+
+                  // If 5+ alternating turns are drawn, it is a scribble gesture (safe from letters like 'ㄹ')
+                  if (turnCountRef.current >= 5) {
+                    isScribbleRef.current = true;
+                  }
                 }
               }
             }
