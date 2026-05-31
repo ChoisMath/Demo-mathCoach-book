@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { MathView } from "@/components/MathView";
 import { coaches } from "@/lib/coaches";
 import { DrawingCanvas } from "@/components/DrawingCanvas";
@@ -8,16 +9,18 @@ import {
   BookOpen, 
   Send, 
   CheckCircle, 
-  HelpCircle, 
   Lock, 
   Unlock, 
   Download, 
-  ChevronRight, 
   Sparkles,
   User,
   GraduationCap,
-  Maximize2
+  AlertTriangle,
+  Lightbulb,
+  Compass,
+  FileText
 } from "lucide-react";
+
 
 interface CoachResponse {
   reply: string;
@@ -65,11 +68,9 @@ export default function StudentPage() {
   // Student Input
   const [studentSolutionImage, setStudentSolutionImage] = useState("");
   const [studentExplanation, setStudentExplanation] = useState("");
-  const [isSolved, setIsSolved] = useState<boolean | null>(null);
 
   // Workflow State
   const [isInitialSubmitted, setIsInitialSubmitted] = useState(false);
-  const [selectedCoachId, setSelectedCoachId] = useState<string>("algebra");
   
   // Coach Responses & Logs
   const [coachResponses, setCoachResponses] = useState<Record<string, CoachResponse>>({});
@@ -80,14 +81,23 @@ export default function StudentPage() {
   });
   const [finalReflection, setFinalReflection] = useState("");
 
-  // UI State
+  // UI & Warning States
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadingCoachId, setLoadingCoachId] = useState<string | null>(null);
+  const [coachErrors, setCoachErrors] = useState<Record<string, string | null>>({
+    algebra: null,
+    geometry: null,
+    argumentation: null,
+  });
+  const [showWarningModal, setShowWarningModal] = useState(false);
+  const [pendingCoachId, setPendingCoachId] = useState<string | null>(null);
+  const [emptyLogCoachNames, setEmptyLogCoachNames] = useState<string[]>([]);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [isClient, setIsClient] = useState(false);
 
   // Mount check
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsClient(true);
 
     // Load preset problems from database API
@@ -114,7 +124,6 @@ export default function StudentPage() {
         setStudentName(parsed.studentName || "");
         setStudentSolutionImage(parsed.studentSolutionImage || "");
         setStudentExplanation(parsed.studentExplanation || "");
-        if (parsed.isSolved !== undefined) setIsSolved(parsed.isSolved);
       } catch (e) {
         console.error(e);
       }
@@ -132,11 +141,10 @@ export default function StudentPage() {
           studentName,
           studentSolutionImage,
           studentExplanation,
-          isSolved,
         })
       );
     }
-  }, [className, studentNumber, studentName, studentSolutionImage, studentExplanation, isSolved, isClient]);
+  }, [className, studentNumber, studentName, studentSolutionImage, studentExplanation, isClient]);
 
 
   // Extract SVG from text
@@ -149,7 +157,7 @@ export default function StudentPage() {
     if (match) {
       const svgCode = match[1];
       // Clean up text
-      let cleanText = text
+      const cleanText = text
         .replace(/```(?:xml|svg)?\s*<svg[\s\S]*?<\/svg>\s*```/gi, "")
         .replace(/<svg[\s\S]*?<\/svg>/gi, "")
         .trim();
@@ -159,15 +167,79 @@ export default function StudentPage() {
     return { reply: text, svg: null, cleanText: text };
   };
 
-  // Check if current coach's comparison log is written
+  // Check if current coach's comparison log is written (at least 5 chars)
   const isComparisonWrittenFor = (id: string) => {
-    return comparisonLogs[id]?.trim().length > 5;
+    return (comparisonLogs[id] || "").trim().length >= 5;
+  };
+
+  // Parser for coach response sections
+  interface ParsedSections {
+    perspective: string;
+    advice: string;
+    keyIdea: string;
+    isParsed: boolean;
+  }
+
+  const parseFeedbackSections = (text: string): ParsedSections => {
+    if (!text) {
+      return { perspective: "", advice: "", keyIdea: "", isParsed: false };
+    }
+    
+    // Pattern: 1. 풀이 관점 / 2. 단계 분석 / 3. 핵심 아이디어
+    const perspectiveRegex = /(?:1\.|###|\*\*1\.)\s*풀이\s*관점[:\s\-\*]*([\s\S]*?)(?=(?:2\.|###|\*\*2\.)\s*단계\s*분석|$)/i;
+    const adviceRegex = /(?:2\.|###|\*\*2\.)\s*단계\s*분석\s*(?:및\s*조언)?[:\s\-\*]*([\s\S]*?)(?=(?:3\.|###|\*\*3\.)\s*핵심\s*아이디어|$)/i;
+    const keyIdeaRegex = /(?:3\.|###|\*\*3\.)\s*핵심\s*아이디어[:\s\-\*]*([\s\S]*?)$/i;
+
+    const pMatch = text.match(perspectiveRegex);
+    const aMatch = text.match(adviceRegex);
+    const iMatch = text.match(keyIdeaRegex);
+
+    if (pMatch && aMatch && iMatch) {
+      return {
+        perspective: pMatch[1].trim(),
+        advice: aMatch[1].trim(),
+        keyIdea: iMatch[1].trim(),
+        isParsed: true
+      };
+    }
+
+    // Fallback: simple text splits
+    const split1 = text.split(/(?:^|\n)(?:2\.|###\s*2\.)/);
+    if (split1.length >= 2) {
+      const part1 = split1[0];
+      const rest = split1.slice(1).join("2.");
+      const split2 = rest.split(/(?:^|\n)(?:3\.|###\s*3\.)/);
+      if (split2.length >= 2) {
+        const part2 = split2[0];
+        const part3 = split2.slice(1).join("3.");
+        
+        const cleanPart1 = part1.replace(/(?:1\.|###\s*1\.)\s*풀이\s*관점[:\s\-\*]*/i, "").trim();
+        const cleanPart2 = part2.replace(/\s*단계\s*분석\s*(?:및\s*조언)?[:\s\-\*]*/i, "").trim();
+        const cleanPart3 = part3.replace(/\s*핵심\s*아이디어[:\s\-\*]*/i, "").trim();
+        
+        if (cleanPart1 || cleanPart2 || cleanPart3) {
+          return {
+            perspective: cleanPart1 || "",
+            advice: cleanPart2 || "",
+            keyIdea: cleanPart3 || "",
+            isParsed: true
+          };
+        }
+      }
+    }
+
+    return {
+      perspective: "",
+      advice: "",
+      keyIdea: "",
+      isParsed: false
+    };
   };
 
   // Submit initial solution & activate coaches
   const handleInitialSubmit = () => {
     if (!className || !studentNumber || !studentName) {
-      alert("학급명, 번호, 이름을 먼저 모두 입력해 주세요.");
+      alert("학급 코드, 번호, 이름을 먼저 모두 입력해 주세요.");
       return;
     }
     if (!problem.trim()) {
@@ -178,19 +250,14 @@ export default function StudentPage() {
       alert("자신의 손글씨 풀이를 패드에 작성해 주세요.");
       return;
     }
-    if (isSolved === null) {
-      alert("스스로 정답을 해결했는지 여부를 선택해 주세요.");
-      return;
-    }
     setIsInitialSubmitted(true);
-    // Request first coach
-    callCoachApi(selectedCoachId);
   };
 
   // Call Gemini Coach API
   const callCoachApi = async (coachId: string) => {
+    setLoadingCoachId(coachId);
     setLoading(true);
-    setError(null);
+    setCoachErrors(prev => ({ ...prev, [coachId]: null }));
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -201,7 +268,6 @@ export default function StudentPage() {
           studentSolutionImage,
           studentExplanation,
           coachId,
-          isSolved,
         }),
       });
 
@@ -213,19 +279,36 @@ export default function StudentPage() {
           [coachId]: parsedResponse
         }));
       } else {
-        setError(data.error || "코칭 내용을 불러오지 못했습니다.");
+        setCoachErrors(prev => ({ ...prev, [coachId]: data.error || "코칭 내용을 불러오지 못했습니다." }));
       }
-    } catch (err) {
-      setError("서버와의 통신이 실패했습니다. 네트워크 상태를 확인해 주세요.");
+    } catch {
+      setCoachErrors(prev => ({ ...prev, [coachId]: "서버와의 통신이 실패했습니다. 네트워크 상태를 확인해 주세요." }));
     } finally {
       setLoading(false);
+      setLoadingCoachId(null);
     }
   };
 
-  // Select another coach (handles lock mechanics)
-  const handleCoachSelect = (coachId: string) => {
-    setSelectedCoachId(coachId);
-    if (isInitialSubmitted && !coachResponses[coachId]) {
+  // Handle manual coach call triggering warning checks
+  const handleCallCoach = (coachId: string) => {
+    if (!isInitialSubmitted) {
+      alert("먼저 1차 풀이를 제출해 주세요.");
+      return;
+    }
+
+    // Check if any previously called coach has an empty comparison log
+    const emptyLogs = coaches.filter(c => {
+      const hasResp = !!coachResponses[c.id];
+      const isDifferent = c.id !== coachId;
+      const isLogEmpty = !comparisonLogs[c.id]?.trim();
+      return hasResp && isDifferent && isLogEmpty;
+    });
+
+    if (emptyLogs.length > 0) {
+      setEmptyLogCoachNames(emptyLogs.map(c => c.name));
+      setPendingCoachId(coachId);
+      setShowWarningModal(true);
+    } else {
       callCoachApi(coachId);
     }
   };
@@ -234,9 +317,15 @@ export default function StudentPage() {
   const handleFinalSubmit = () => {
     // Validate that all activated coaches have comparison logs
     const activeCoaches = coaches.filter(c => coachResponses[c.id]);
+    
+    if (activeCoaches.length < 2) {
+      alert("최종 제출을 하려면 두 개 이상의 코치를 호출하여 조언을 받고 비교 기록을 작성해 주세요.");
+      return;
+    }
+
     for (const c of activeCoaches) {
       if (!isComparisonWrittenFor(c.id)) {
-        alert(`${c.name}의 풀이를 읽고 비교 기록을 6자 이상 작성해 주세요.`);
+        alert(`${c.name}의 풀이를 읽고 비교 기록을 5자 이상 작성해 주세요.`);
         return;
       }
     }
@@ -254,7 +343,7 @@ export default function StudentPage() {
       problem,
       studentSolutionImage,
       studentExplanation,
-      isSolved: !!isSolved,
+      isSolved: false,
       coachResponses: Object.fromEntries(
         Object.entries(coachResponses).map(([k, v]) => [k, v.reply])
       ),
@@ -308,12 +397,12 @@ export default function StudentPage() {
           </div>
         </div>
         <div className="flex items-center space-x-3 text-sm">
-          <a
+          <Link
             href="/teacher"
             className="px-4 py-2 text-blue-600 hover:text-blue-700 font-medium hover:bg-blue-50 rounded-lg transition-colors"
           >
             교사 화면으로 이동
-          </a>
+          </Link>
         </div>
       </header>
 
@@ -334,7 +423,6 @@ export default function StudentPage() {
                 setIsInitialSubmitted(false);
                 setStudentSolutionImage("");
                 setStudentExplanation("");
-                setIsSolved(null);
                 setCoachResponses({});
                 setComparisonLogs({ algebra: "", geometry: "", argumentation: "" });
                 setFinalReflection("");
@@ -362,11 +450,11 @@ export default function StudentPage() {
             <div className="grid grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1.5 flex items-center gap-1">
-                  <User className="h-3.5 w-3.5 text-slate-400" /> 학급명
+                  <User className="h-3.5 w-3.5 text-slate-400" /> 학급 코드
                 </label>
                 <input
                   type="text"
-                  placeholder="예: 3학년1반"
+                  placeholder="예: 3-1 또는 코드"
                   value={className}
                   onChange={(e) => setClassName(e.target.value)}
                   disabled={isInitialSubmitted}
@@ -462,41 +550,7 @@ export default function StudentPage() {
               />
             </div>
 
-            {/* Solved Status */}
-            <div className="space-y-2">
-              <label className="block text-sm font-semibold text-slate-700">스스로 정답을 최종 해결하셨나요?</label>
-              <div className="grid grid-cols-2 gap-4">
-                <button
-                  type="button"
-                  onClick={() => setIsSolved(true)}
-                  disabled={loading}
-                  className={`py-3 px-4 rounded-xl border text-sm font-semibold flex items-center justify-center space-x-2 transition-all cursor-pointer ${
-                    isSolved === true
-                      ? "border-emerald-600 bg-emerald-50 text-emerald-800 shadow-sm"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <CheckCircle className="h-4.5 w-4.5" />
-                  <span>네, 정답을 구했습니다.</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsSolved(false)}
-                  disabled={loading}
-                  className={`py-3 px-4 rounded-xl border text-sm font-semibold flex items-center justify-center space-x-2 transition-all cursor-pointer ${
-                    isSolved === false
-                      ? "border-amber-500 bg-amber-50 text-amber-800 shadow-sm"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <HelpCircle className="h-4.5 w-4.5" />
-                  <span>아니오, 중간에 막혔습니다.</span>
-                </button>
-              </div>
-              <p className="text-xs text-slate-400 mt-1">
-                ※ 막혔다고 응답한 경우, 제출 시 해당 관점의 코치로부터 문제를 풀어가기 위한 디딤돌 힌트가 제공됩니다.
-              </p>
-            </div>
+
 
             {/* Submit Button */}
             <div className="space-y-3">
@@ -512,7 +566,7 @@ export default function StudentPage() {
                   <Send className="h-4.5 w-4.5" />
                 )}
                 <span>
-                  {isInitialSubmitted ? "풀이 수정 제출 및 코치 호출" : "풀이 제출 및 코칭 받기"}
+                  {isInitialSubmitted ? "풀이 제출 및 코칭 받기 (수정하여 다시 제출)" : "풀이 제출 및 코칭 받기"}
                 </span>
               </button>
               
@@ -529,7 +583,6 @@ export default function StudentPage() {
                         setCoachResponses({});
                         setStudentSolutionImage("");
                         setStudentExplanation("");
-                        setIsSolved(null);
                       }
                     }}
                     className="text-xs text-blue-600 hover:underline font-medium cursor-pointer"
@@ -546,185 +599,275 @@ export default function StudentPage() {
           <div className="space-y-6">
             {/* AI Coaching Console */}
             <div className="bg-white rounded-2xl border border-slate-200/80 shadow-md p-6 space-y-6">
-              <div className="border-b border-slate-100 pb-4 flex justify-between items-center">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                    <Sparkles className="h-5 w-5 text-indigo-500" />
-                    Step 2. AI 다중관점 코칭
-                  </h2>
-                  <p className="text-xs text-slate-500">풀이를 제출하고 코치를 하나씩 활성화하여 다른 시야를 학습해 보세요.</p>
-                </div>
+              <div className="border-b border-slate-100 pb-4">
+                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 text-indigo-500" />
+                  Step 2. AI 다중관점 코칭
+                </h2>
+                <p className="text-xs text-slate-500">풀이를 제출하고 코치를 하나씩 활성화하여 다른 시야를 학습해 보세요.</p>
               </div>
 
-              {/* Coach Selection Tab Headers */}
-              <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-6">
                 {coaches.map((c) => {
-                  const isCoachUnlocked = isInitialSubmitted;
-                  const isActive = selectedCoachId === c.id;
                   const hasResponse = !!coachResponses[c.id];
+                  const isLoading = loadingCoachId === c.id;
+                  const coachError = coachErrors[c.id];
+
+                  // Parse response sections
+                  const parsed = hasResponse ? parseFeedbackSections(coachResponses[c.id].cleanText) : null;
+                  const svgCode = hasResponse ? coachResponses[c.id].svg : null;
 
                   return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      disabled={!isCoachUnlocked}
-                      onClick={() => handleCoachSelect(c.id)}
-                      className={`relative py-3 px-2 rounded-xl border text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center space-y-1.5 ${
-                        isActive
-                          ? "border-blue-600 bg-blue-50/50 text-blue-800 shadow-sm"
-                          : isCoachUnlocked
-                          ? "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                          : "border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed"
-                      }`}
-                    >
-                      {/* Badge indicator */}
-                      {isCoachUnlocked && hasResponse && (
-                        <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-emerald-500" />
-                      )}
-                      
-                      {/* Icon */}
-                      {isCoachUnlocked ? (
-                        <Unlock className={`h-4 w-4 ${isActive ? "text-blue-600" : "text-slate-400"}`} />
-                      ) : (
-                        <Lock className="h-4 w-4 text-slate-300" />
-                      )}
+                    <div key={c.id} className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm transition-all duration-300">
+                      {/* Header */}
+                      <div className="bg-slate-50/80 border-b border-slate-100 px-5 py-4 flex items-center justify-between">
+                        <div className="flex items-center space-x-2.5">
+                          <span className={`p-1.5 rounded-lg ${
+                            hasResponse 
+                              ? "bg-emerald-50 text-emerald-600" 
+                              : !isInitialSubmitted 
+                              ? "bg-slate-100 text-slate-400" 
+                              : "bg-blue-50 text-blue-600"
+                          }`}>
+                            {hasResponse ? (
+                              <CheckCircle className="h-4.5 w-4.5" />
+                            ) : !isInitialSubmitted ? (
+                              <Lock className="h-4.5 w-4.5" />
+                            ) : (
+                              <Unlock className="h-4.5 w-4.5" />
+                            )}
+                          </span>
+                          <div>
+                            <h3 className="text-sm font-bold text-slate-800">{c.name}</h3>
+                            <p className="text-[11px] text-slate-400 mt-0.5">{c.description}</p>
+                          </div>
+                        </div>
+                        
+                        {hasResponse && (
+                          <span className="text-[10px] px-2.5 py-0.5 bg-emerald-100 text-emerald-800 font-bold rounded">
+                            호출 완료
+                          </span>
+                        )}
+                      </div>
 
-                      <span className="text-center font-bold">{c.name}</span>
-                    </button>
+                      {/* Body */}
+                      <div className="p-5 bg-white space-y-4">
+                        {!isInitialSubmitted ? (
+                          <div className="py-6 text-center text-slate-400 text-xs flex flex-col items-center justify-center space-y-1.5">
+                            <Lock className="h-8 w-8 text-slate-300 animate-pulse" />
+                            <p>1차 풀이를 제출하면 이 코치를 호출할 수 있습니다.</p>
+                          </div>
+                        ) : isLoading ? (
+                          <div className="py-10 text-center space-y-3">
+                            <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                            <p className="text-xs font-semibold text-blue-600 animate-pulse">
+                              {c.name}가 학생의 풀이를 분석하는 중입니다...
+                            </p>
+                          </div>
+                        ) : coachError ? (
+                          <div className="p-4 bg-red-50 text-red-700 rounded-xl border border-red-100 text-xs space-y-2">
+                            <p className="font-bold">에러가 발생했습니다:</p>
+                            <p>{coachError}</p>
+                            <button
+                              type="button"
+                              onClick={() => callCoachApi(c.id)}
+                              className="px-3 py-1.5 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 cursor-pointer"
+                            >
+                              재시도하기
+                            </button>
+                          </div>
+                        ) : !hasResponse ? (
+                          <div className="py-6 flex flex-col items-center justify-center space-y-3 bg-slate-50/50 border border-dashed border-slate-200 rounded-xl">
+                            <p className="text-xs text-slate-500 font-medium">아직 호출되지 않았습니다.</p>
+                            <button
+                              type="button"
+                              onClick={() => handleCallCoach(c.id)}
+                              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all hover:scale-102 cursor-pointer flex items-center gap-1.5"
+                            >
+                              <Unlock className="h-3.5 w-3.5" />
+                              <span>{c.name} 호출하여 조언받기</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {/* Coach Feedback Render (3 parsed parts or fallback) */}
+                            {parsed && parsed.isParsed ? (
+                              <div className="space-y-3">
+                                {/* Perspective */}
+                                <div className="p-4 bg-indigo-50/30 border border-indigo-100/50 rounded-xl space-y-1">
+                                  <div className="flex items-center space-x-1.5 text-xs font-bold text-indigo-700">
+                                    <BookOpen className="h-4 w-4" />
+                                    <span>풀이 관점</span>
+                                  </div>
+                                  <div className="text-sm text-slate-700 pl-5 leading-relaxed">
+                                    <MathView text={parsed.perspective} />
+                                  </div>
+                                </div>
+
+                                {/* Advice */}
+                                <div className="p-4 bg-blue-50/30 border border-blue-100/50 rounded-xl space-y-1">
+                                  <div className="flex items-center space-x-1.5 text-xs font-bold text-blue-700">
+                                    <Compass className="h-4 w-4" />
+                                    <span>단계 분석 및 조언</span>
+                                  </div>
+                                  <div className="text-sm text-slate-700 pl-5 leading-relaxed">
+                                    <MathView text={parsed.advice} />
+                                  </div>
+                                </div>
+
+                                {/* Key Idea */}
+                                <div className="p-4 bg-emerald-50/30 border border-emerald-100/50 rounded-xl space-y-1">
+                                  <div className="flex items-center space-x-1.5 text-xs font-bold text-emerald-700">
+                                    <Lightbulb className="h-4 w-4" />
+                                    <span>핵심 아이디어</span>
+                                  </div>
+                                  <div className="text-sm text-slate-700 pl-5 leading-relaxed">
+                                    <MathView text={parsed.keyIdea} />
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              // Fallback
+                              <div className="p-4 bg-blue-50/20 border border-slate-100 rounded-xl text-slate-800 text-sm">
+                                <MathView text={coachResponses[c.id].cleanText} />
+                              </div>
+                            )}
+
+                            {/* SVG Visualizations if any */}
+                            {svgCode && (
+                              <div className="space-y-2 pt-1">
+                                <div className="text-xs font-bold text-slate-500 flex items-center gap-1">
+                                  <span>기하 시각화 그래프</span>
+                                  <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-800 font-bold rounded">SVG Vector</span>
+                                </div>
+                                <div className="w-full flex items-center justify-center p-4 bg-slate-900 rounded-xl shadow-inner border border-slate-800 overflow-auto min-h-[300px]">
+                                  <div 
+                                    className="w-full max-w-md bg-transparent text-white"
+                                    dangerouslySetInnerHTML={{ __html: svgCode || "" }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Comparison Log */}
+                            <div className="space-y-2.5 pt-3 border-t border-slate-100">
+                              <div className="flex justify-between items-center">
+                                <label className="block text-xs font-bold text-slate-700 flex items-center gap-1">
+                                  <FileText className="h-3.5 w-3.5 text-slate-500" />
+                                  <span>{c.name} 풀이 비교 일지</span>
+                                </label>
+                                {isComparisonWrittenFor(c.id) ? (
+                                  <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-0.5">
+                                    <CheckCircle className="h-3 w-3" /> 작성됨
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-amber-600 font-bold animate-pulse">
+                                    비교 글을 작성해 주세요 (5자 이상)
+                                  </span>
+                                )}
+                              </div>
+                              <textarea
+                                placeholder={`[생각해 볼 질문]\n1. 내 풀이와 이 코치의 조언이 만나는 지점은 무엇인가?\n2. 이 코치가 짚어 준 다음 한 걸음은 무엇인가?\n3. 내 풀이에서 다시 고치거나 덧붙여야 할 부분은 무엇인가?\n4. 이 관점은 다음 문제에서 언제 써 볼 수 있을까?`}
+                                value={comparisonLogs[c.id] || ""}
+                                onChange={(e) => setComparisonLogs(prev => ({
+                                  ...prev,
+                                  [c.id]: e.target.value
+                                }))}
+                                rows={4}
+                                className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none placeholder:text-slate-400/90 leading-relaxed font-sans animate-in fade-in duration-200"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   );
                 })}
               </div>
-
-              {/* Coach Feedback Body */}
-              {!isInitialSubmitted ? (
-                <div className="py-16 text-center text-slate-400 border border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center space-y-3">
-                  <Lock className="h-12 w-12 text-slate-300" />
-                  <p className="text-sm font-medium">왼쪽에서 자기 풀이를 제출하면 코칭 탭이 활성화됩니다.</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {/* Selected Coach Description */}
-                  <div className="p-3.5 bg-slate-50 rounded-xl text-xs border border-slate-100 text-slate-600">
-                    <span className="font-semibold text-slate-700">코치 안내: </span>
-                    {coaches.find(c => c.id === selectedCoachId)?.description}
-                  </div>
-
-                  {loading && selectedCoachId && !coachResponses[selectedCoachId] ? (
-                    <div className="py-20 text-center space-y-4">
-                      <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                      <p className="text-xs font-semibold text-blue-600 animate-pulse">
-                        {coaches.find(c => c.id === selectedCoachId)?.name}가 학생의 풀이를 분석 중입니다...
-                      </p>
-                    </div>
-                  ) : error && !coachResponses[selectedCoachId] ? (
-                    <div className="p-4 bg-red-50 text-red-700 rounded-xl border border-red-100 text-sm">
-                      <p className="font-bold">에러가 발생했습니다:</p>
-                      <p>{error}</p>
-                      <button
-                        onClick={() => callCoachApi(selectedCoachId)}
-                        className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg text-xs font-semibold hover:bg-red-700"
-                      >
-                        재시도하기
-                      </button>
-                    </div>
-                  ) : coachResponses[selectedCoachId] ? (
-                    <div className="space-y-4">
-                      {/* Coach Explanation Text */}
-                      <div className="p-5 bg-blue-50/20 border border-slate-100 rounded-2xl text-slate-800 text-sm space-y-4">
-                        <div className="flex items-center space-x-2 border-b border-slate-100 pb-2">
-                          <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs font-bold rounded">COACH FEEDBACK</span>
-                          <span className="text-xs text-slate-400 font-mono">Real-time Gemini</span>
-                        </div>
-                        
-                        <MathView text={coachResponses[selectedCoachId].cleanText} />
-                      </div>
-
-                      {/* SVG Visualization Box (For Geometry Coach primarily) */}
-                      {coachResponses[selectedCoachId].svg && (
-                        <div className="space-y-2">
-                          <div className="text-xs font-bold text-slate-500 flex items-center gap-1">
-                            <span>기하 시각화 그래프</span>
-                            <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-800 font-bold rounded">SVG Vector</span>
-                          </div>
-                          <div className="w-full flex items-center justify-center p-4 bg-slate-900 rounded-xl shadow-inner border border-slate-850 overflow-auto min-h-[300px]">
-                            <div 
-                              className="w-full max-w-md bg-transparent text-white"
-                              dangerouslySetInnerHTML={{ __html: coachResponses[selectedCoachId].svg || "" }}
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Comparison Log Input */}
-                      <div className="space-y-2.5 pt-2 border-t border-slate-100">
-                        <div className="flex justify-between items-center">
-                          <label className="block text-sm font-semibold text-slate-800">
-                            {coaches.find(c => c.id === selectedCoachId)?.name} 풀이 비교 일지
-                          </label>
-                          {isComparisonWrittenFor(selectedCoachId) ? (
-                            <span className="text-xs text-emerald-600 font-semibold flex items-center gap-1">
-                              <CheckCircle className="h-3.5 w-3.5 fill-emerald-50" /> 작성 완료
-                            </span>
-                          ) : (
-                            <span className="text-xs text-amber-600 font-semibold">비교 글을 6자 이상 작성해 주세요</span>
-                          )}
-                        </div>
-                        <textarea
-                          placeholder="방금 확인한 코치의 풀이 방법이나 힌트가 나의 원래 풀이와 무엇이 다른지, 그리고 어떤 점이 새로운지 적어 보세요."
-                          value={comparisonLogs[selectedCoachId]}
-                          onChange={(e) => setComparisonLogs(prev => ({
-                            ...prev,
-                            [selectedCoachId]: e.target.value
-                          }))}
-                          rows={3}
-                          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="py-12 text-center text-slate-400">
-                      <p className="text-sm">코치 탭을 눌러 분석 요청을 받아 보세요.</p>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* Step 3. Final Reflection & Submit */}
-            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-md p-6 space-y-4">
-              <div className="border-b border-slate-100 pb-4">
-                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                  <CheckCircle className="h-5 w-5 text-emerald-500" />
-                  Step 3. 최종 학습 성찰 및 제출
-                </h2>
-                <p className="text-xs text-slate-500">모든 풀이를 비교한 후, 종합적인 깨달음을 서술하고 제출해 주세요.</p>
-              </div>
+            {Object.keys(coachResponses).length >= 2 && (
+              <div className="bg-white rounded-2xl border border-slate-200/80 shadow-md p-6 space-y-4 transition-all duration-300 animate-in fade-in slide-in-from-bottom-4">
+                <div className="border-b border-slate-100 pb-4">
+                  <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <CheckCircle className="h-5 w-5 text-emerald-500" />
+                    Step 3. 최종 학습 성찰 및 제출
+                  </h2>
+                  <p className="text-xs text-slate-500">두 개 이상의 코치 풀이를 비교한 후, 최종 성찰을 기록하고 완료하세요.</p>
+                </div>
 
-              {/* Final Reflection Input */}
-              <div className="space-y-2">
-                <label className="block text-sm font-semibold text-slate-700">최종 종합 성찰 일지</label>
-                <textarea
-                  placeholder="대수, 기하, 논증 세 가지 서로 다른 풀이를 모두 확인하고 비교하면서, 수학 문제를 푸는 태도나 사고방식에서 어떤 변화나 깨달음을 얻었는지 종합 성찰을 적어주세요. (최소 10자 이상)"
-                  value={finalReflection}
-                  onChange={(e) => setFinalReflection(e.target.value)}
+                {/* Final Reflection Input */}
+                <div className="space-y-2">
+                  <label className="block text-sm font-semibold text-slate-700">최종 종합 성찰 일지</label>
+                  <textarea
+                    placeholder={`[생각해 볼 질문]\n1. 오늘 본 코치 중 나에게 가장 도움이 된 코치는 누구인가?\n2. 그 코치의 어떤 조언이 내 풀이를 가장 많이 움직였는가?\n3. 다음에 비슷한 문제를 만나면 어디서부터 다시 시작해 볼 것인가?`}
+                    value={finalReflection}
+                    onChange={(e) => setFinalReflection(e.target.value)}
+                    disabled={!isInitialSubmitted}
+                    rows={5}
+                    className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none placeholder:text-slate-400/90 leading-relaxed disabled:bg-slate-50 disabled:opacity-60"
+                  />
+                </div>
+
+                {/* Submit / Export Trigger */}
+                <button
+                  type="button"
+                  onClick={handleFinalSubmit}
                   disabled={!isInitialSubmitted}
-                  rows={4}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none disabled:bg-slate-50 disabled:opacity-60"
-                />
+                  className="w-full py-4 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all cursor-pointer flex items-center justify-center space-x-2 shadow-md shadow-emerald-500/10 hover:scale-101 disabled:bg-slate-300 disabled:shadow-none disabled:cursor-not-allowed disabled:scale-100"
+                >
+                  <Download className="h-4.5 w-4.5" />
+                  <span>최종 제출 및 학습 결과 파일 다운로드</span>
+                </button>
               </div>
+            )}
 
-              {/* Submit / Export Trigger */}
+          </div>
+        </div>
+      )}
+
+      {/* Custom Warning Modal */}
+      {showWarningModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 transform transition-all animate-in zoom-in-95 duration-200">
+            <div className="flex items-start space-x-3.5 mb-4">
+              <div className="p-2 bg-amber-50 rounded-full text-amber-600 shrink-0">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">비교 기록이 비어 있습니다</h3>
+                <p className="text-sm text-slate-500 mt-1.5 leading-relaxed">
+                  이전 코치({emptyLogCoachNames.join(", ")})의 비교 기록을 아직 작성하지 않으셨네요! 
+                  코치의 피드백과 본인의 풀이를 비교하여 기록하면 학습 효과가 훨씬 높아집니다.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end space-x-3 pt-2">
               <button
                 type="button"
-                onClick={handleFinalSubmit}
-                disabled={!isInitialSubmitted}
-                className="w-full py-4 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all cursor-pointer flex items-center justify-center space-x-2 shadow-md shadow-emerald-500/10 hover:scale-101 disabled:bg-slate-300 disabled:shadow-none disabled:cursor-not-allowed disabled:scale-100"
+                onClick={() => {
+                  setShowWarningModal(false);
+                  setPendingCoachId(null);
+                }}
+                className="px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer transition-colors"
               >
-                <Download className="h-4.5 w-4.5" />
-                <span>최종 제출 및 학습 결과 파일 다운로드</span>
+                기록 작성하기
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (pendingCoachId) {
+                    callCoachApi(pendingCoachId);
+                  }
+                  setShowWarningModal(false);
+                  setPendingCoachId(null);
+                }}
+                className="px-4 py-2.5 bg-amber-600 text-white rounded-xl text-sm font-semibold hover:bg-amber-700 cursor-pointer transition-colors"
+              >
+                네, 계속 진행할게요
               </button>
             </div>
-
           </div>
         </div>
       )}

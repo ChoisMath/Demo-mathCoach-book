@@ -332,6 +332,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (disabled) return;
 
     if (e.pointerType === "pen") {
+      // eslint-disable-next-line react-hooks/purity
       lastPenTimeRef.current = Date.now();
     }
 
@@ -380,7 +381,8 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         // Measure Euclidean distance in virtual coords
         const dist = Math.sqrt(Math.pow(vPoint.x - lastPt.x, 2) + Math.pow(vPoint.y - lastPt.y, 2));
         
-        if (dist > 15) { // Subsample turns every 15 virtual units
+        const sampleThreshold = e.pointerType === "mouse" ? 8 : 15;
+        if (dist > sampleThreshold) { // Subsample turns dynamically based on pointer type
           scribblePoints.push(vPoint);
           
           if (scribblePoints.length >= 3) {
