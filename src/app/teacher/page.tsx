@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { MathView } from "@/components/MathView";
 import { coaches } from "@/lib/coaches";
 import { 
@@ -15,7 +16,8 @@ import {
   CheckCircle,
   HelpCircle,
   FileCheck,
-  Trash2
+  Trash2,
+  BarChart2
 } from "lucide-react";
 
 interface Submission {
@@ -61,6 +63,7 @@ const DEFAULT_PROBLEMS = [
 
 export default function TeacherPage() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "presets">("dashboard");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [presetProblems, setPresetProblems] = useState<any[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [selectedClass, setSelectedClass] = useState<string>("all");
@@ -70,6 +73,7 @@ export default function TeacherPage() {
   const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsClient(true);
     const loadData = async () => {
       try {
@@ -294,9 +298,12 @@ export default function TeacherPage() {
           </div>
         </div>
         <div className="flex items-center space-x-3 text-sm">
-          <a href="/" className="px-4 py-2 text-slate-600 hover:text-slate-700 font-medium hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-1.5">
+          <Link href="/teacher/analysis" className="px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-semibold rounded-lg transition-colors flex items-center gap-1.5 shadow-sm">
+            <BarChart2 className="h-4 w-4" /> 수업 분석 화면으로
+          </Link>
+          <Link href="/" className="px-4 py-2 text-slate-600 hover:text-slate-700 font-medium hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-1.5">
             <ArrowLeft className="h-4 w-4" /> 학생 화면으로
-          </a>
+          </Link>
         </div>
       </header>
 
